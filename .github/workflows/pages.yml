@@ -1,0 +1,53 @@
+# Publishes the web version (web/) to GitHub Pages: https://<user>.github.io/<repo>/
+# One-time setup: repo Settings → Pages → Build and deployment → Source: "GitHub Actions".
+name: Deploy web version
+
+on:
+  push:
+    branches: [master]
+    paths: ['web/**', '.github/workflows/pages.yml']
+  pull_request:                      # PRs run the tests only; they never deploy
+    paths: ['web/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Dissectors, pcap/pcapng, filters, PWA assets
+        run: node web/test/run.js
+      - name: Capture agent (auth, origin checks, streaming)
+        run: node web/test/agent.js
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble site (everything in web/ except the tests)
+        run: |
+          mkdir _site
+          rsync -a --exclude 'test' --exclude 'README.md' web/ _site/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
