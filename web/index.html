@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- connect-src allows only WebSockets to this computer (127.0.0.1) for the optional live-capture agent: a capture can never be sent to another machine. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src ws://127.0.0.1:* ws://localhost:*; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="color-scheme" content="light dark">
+  <title>Bavin Web</title>
+  <meta name="author" content="SeyyedKhandon">
+  <meta name="description" content="Open a packet capture and read it the way the RFCs describe it: layer by layer, from Ethernet up to HTTP. Runs entirely in your browser.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="theme-color" content="#f4f6f9" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0e131a" media="(prefers-color-scheme: dark)">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Bavin">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="Bavin Web — home">
+      <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
+        <path class="l1" d="M16 3 29 9.5 16 16 3 9.5z"/>
+        <path class="l2" d="M3 14.5 16 21 29 14.5" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <path class="l3" d="M3 20.5 16 27 29 20.5" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span>Bavin</span><small>web</small>
+    </a>
+
+    <nav class="tabs" id="tabs" role="tablist" aria-label="Views" hidden>
+      <button role="tab" id="tab-packets" aria-selected="true" aria-controls="workspace" data-tab="packets">Packets</button>
+      <button role="tab" id="tab-overview" aria-selected="false" aria-controls="overview" data-tab="overview">Overview</button>
+    </nav>
+
+    <div class="fileinfo" id="fileinfo" aria-live="polite"></div>
+
+    <div class="actions">
+      <button class="btn" id="btnOpen" type="button">Open<span class="long"> capture…</span></button>
+      <button class="btn ghost" id="btnPaste" type="button">Paste hex</button>
+      <button class="btn ghost install-btn" id="btnInstall" type="button" hidden title="Install Bavin as an app — it then works offline and can open .pcap files"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 3v12m0 0-4-4m4 4 4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Install</button>
+      <button class="btn ghost live-btn" id="btnLive" type="button" aria-haspopup="dialog"><i class="dot" aria-hidden="true"></i>Live</button>
+      <button class="btn ghost icon" id="btnTheme" type="button" aria-label="Switch colour theme" title="Switch colour theme">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="currentColor"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- ───────── landing ───────── -->
+    <section id="landing" class="landing">
+      <div class="hero">
+        <p class="eyebrow">Packet analyzer for learning TCP/IP</p>
+        <h1>See what is inside<br>every packet.</h1>
+        <p class="lede">Open a capture and Bavin unwraps each packet one layer at a time — Ethernet, IP, TCP or UDP, then the application on top — so you can read the protocols the way the RFCs describe them.</p>
+
+        <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose a capture file, or drop one here">
+          <svg viewBox="0 0 48 48" width="44" height="44" aria-hidden="true"><path d="M24 6v24m0 0-9-9m9 9 9-9M8 34v6h32v-6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div>
+            <strong>Drop a capture file here</strong>
+            <span>or click to choose one — <code>.pcap</code> and <code>.pcapng</code> from Wireshark, tcpdump, Wi-Fi sniffers…</span>
+          </div>
+        </div>
+        <p class="livehint">Want to watch traffic as it happens? <button class="linkbtn" id="btnLive2" type="button">Set up live capture</button></p>
+        <p class="livehint" id="installHint" hidden>On iPhone or iPad: tap Share, then “Add to Home Screen” to install.</p>
+        <p class="privacy"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.7 8 11 4.6-1.3 8-6 8-11V5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="m8.5 12 2.5 2.5 4.5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Everything runs in this tab. Your capture is never uploaded — the page is only allowed to talk to your own computer (127.0.0.1), and only for optional live capture.</p>
+      </div>
+
+      <div class="samples">
+        <h2>No capture handy? Try a sample</h2>
+        <div class="sample-grid" id="sampleGrid"></div>
+      </div>
+
+      <div class="info-grid">
+        <details class="card">
+          <summary>How does live capture work in a browser?</summary>
+          <p>It can't, directly: web pages are sandboxed and cannot open a network card. So live capture uses a small helper that runs on <em>your</em> computer, captures with <code>tcpdump</code> and streams packets to this page. It listens on <code>127.0.0.1</code> only and needs a private token.</p>
+          <pre><code>sudo node web/agent/bavin-agent.js</code></pre>
+          <p>Prefer files? Record one with <code>sudo tcpdump -i any -w capture.pcap</code> (or Wireshark) and drop it here.</p>
+        </details>
+        <details class="card" open>
+          <summary>What it understands</summary>
+          <ul class="protos" id="protoList"></ul>
+          <p class="fine">Also decoded: 802.1Q VLAN tags, IPv6 extension headers, mDNS, and TLS record headers (including the SNI hostname in a ClientHello). Everything else is shown as raw payload.</p>
+        </details>
+      </div>
+
+      <footer class="sitefoot">
+        <span>© 2026 SeyyedKhandon</span>
+        <span aria-hidden="true">·</span>
+        <a href="https://github.com/SeyyedKhandon/bavin/blob/master/web/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a>
+        <span aria-hidden="true">·</span>
+        <a href="https://github.com/SeyyedKhandon/bavin" target="_blank" rel="noopener noreferrer">Source on GitHub</a>
+      </footer>
+    </section>
+
+    <!-- ───────── packets ───────── -->
+    <section id="workspace" class="workspace" role="tabpanel" aria-labelledby="tab-packets" hidden data-view="list">
+      <div class="listpane">
+        <div class="livebar" id="liveBar" hidden>
+          <span class="livestate"><i class="dot" aria-hidden="true"></i><span id="liveText">Live</span></span>
+          <span class="liverate" id="liveRate"></span>
+          <label class="follow"><input type="checkbox" id="liveFollow" checked> Follow</label>
+          <button class="btn danger small" id="liveStop" type="button">Stop</button>
+          <button class="btn ghost small" id="liveSave" type="button" hidden>Save .pcap</button>
+        </div>
+        <div class="filterbar">
+          <label class="filter">
+            <span class="sr">Filter packets</span>
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+            <input id="filter" type="text" spellcheck="false" autocomplete="off" placeholder="Filter — e.g. tcp && port == 443, dns, !arp, 192.168.1.1" aria-describedby="filterMsg">
+            <button type="button" id="filterClear" class="clear" aria-label="Clear filter" hidden>×</button>
+          </label>
+          <button class="btn ghost small" id="btnHelp" type="button" aria-haspopup="dialog">Syntax</button>
+          <button class="btn ghost small" id="btnCsv" type="button" title="Download the packets currently shown as CSV">CSV</button>
+        </div>
+        <div class="filtermsg" id="filterMsg" role="status"></div>
+        <div class="chips" id="chips" role="group" aria-label="Quick filters"></div>
+        <div class="listhead" aria-hidden="true"><span>No.</span><span>Time</span><span>Protocol</span><span>Source → Destination</span><span class="r">Len</span></div>
+        <div class="listbody" id="listBody" tabindex="0" role="listbox" aria-label="Packets. Use the up and down arrow keys to move." aria-activedescendant="">
+          <div class="spacer" id="listSpacer"></div>
+        </div>
+        <div class="listfoot" id="listFoot"></div>
+      </div>
+
+      <div class="detailpane" id="detailPane">
+        <div class="detailhead" id="detailHead"></div>
+        <div class="detailscroll" id="detailScroll">
+          <div class="empty" id="detailEmpty">Select a packet to see its layers.</div>
+          <div id="stack" class="stack"></div>
+        </div>
+        <div class="hexpane" id="hexPane">
+          <div class="hexhead">
+            <strong>Raw bytes</strong>
+            <span id="hexStatus" class="hexstatus">Hover a byte or a field to link them.</span>
+          </div>
+          <div class="hexscroll" id="hexScroll"><div id="hex" class="hex"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────── overview ───────── -->
+    <section id="overview" class="overview" role="tabpanel" aria-labelledby="tab-overview" hidden></section>
+  </main>
+
+  <dialog id="pasteDlg" aria-labelledby="pasteTitle">
+    <form method="dialog" id="pasteForm">
+      <h2 id="pasteTitle">Analyze a single packet from hex</h2>
+      <p>Paste the bytes of one Ethernet frame — a Wireshark “Copy as hex dump”, a C array, or plain hex.</p>
+      <textarea id="pasteText" rows="9" spellcheck="false" placeholder="ff ff ff ff ff ff 3c 22 fb 7a 10 5e 08 06 00 01 …"></textarea>
+      <p class="err" id="pasteErr" role="alert"></p>
+      <div class="dlg-actions">
+        <button class="btn ghost" value="cancel" type="submit" formnovalidate>Cancel</button>
+        <button class="btn" id="pasteGo" value="go" type="button">Analyze</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="liveDlg" aria-labelledby="liveTitle">
+    <form method="dialog" id="liveForm">
+      <h2 id="liveTitle">Live capture</h2>
+      <p class="livestatus" id="liveStatus" role="status"></p>
+
+      <div id="liveSetup">
+        <p>Browsers cannot read your network card, so live capture uses a tiny helper that runs on <em>your</em> computer. It captures with <code>tcpdump</code>, listens on <code>127.0.0.1</code> only, and needs a private token.</p>
+
+        <div id="liveHosted">
+          <ol class="steps">
+            <li><span>Download the agent — one small file, open source; read it before running it with admin rights.</span>
+              <div class="cmd"><pre><code id="cmdFetch"></code></pre><button class="btn ghost small copy" type="button" data-copy="cmdFetch">Copy</button></div></li>
+            <li><span>Run it, allowing this site:</span>
+              <div class="cmd"><pre><code id="cmdRun"></code></pre><button class="btn ghost small copy" type="button" data-copy="cmdRun">Copy</button></div></li>
+            <li><span>Paste the link it prints:</span>
+              <div class="linkrow"><input id="liveLink" type="text" spellcheck="false" autocomplete="off" placeholder="https://…/#agent=8765&amp;token=…"><button class="btn small" id="liveConnect" type="button">Connect</button></div></li>
+          </ol>
+        </div>
+        <div id="liveLocal">
+          <div class="cmd"><pre><code id="cmdLocal">sudo node web/agent/bavin-agent.js</code></pre><button class="btn ghost small copy" type="button" data-copy="cmdLocal">Copy</button></div>
+          <p>Then open the URL it prints (it ends in <code>#token=…</code>).</p>
+        </div>
+        <p class="fine">No packets to spare? <code>--replay some.pcap</code> streams a capture file as if it were live, without any privileges. Details in <code>web/README.md</code>.</p>
+      </div>
+
+      <div id="liveReady" hidden>
+        <label class="fieldrow"><span>Interface</span><select id="liveIface"></select></label>
+        <label class="fieldrow"><span>Capture filter <small>(optional, BPF)</small></span><input id="liveFilter" type="text" spellcheck="false" autocomplete="off" placeholder="e.g. tcp port 443   or   host 192.168.1.10"></label>
+        <p class="fine">Capturing needs administrator rights on the agent, not in the browser. Keeps the newest 100,000 packets.</p>
+      </div>
+
+      <p class="err" id="liveErr" role="alert"></p>
+      <div class="dlg-actions">
+        <button class="btn ghost" value="cancel" type="submit" formnovalidate>Close</button>
+        <button class="btn" id="liveStart" type="button" hidden>Start capturing</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="helpDlg" aria-labelledby="helpTitle">
+    <form method="dialog">
+      <h2 id="helpTitle">Filter syntax</h2>
+      <p>Filters look like Wireshark's, so what you learn here carries over. Plain words search every column.</p>
+      <table class="helptable">
+        <tbody>
+          <tr><td><code>tcp</code> <code>dns</code> <code>arp</code> <code>ipv6</code></td><td>packets that contain that protocol layer</td></tr>
+          <tr><td><code>tcp &amp;&amp; port == 443</code></td><td>and · <code>||</code> or · <code>!</code> not · parentheses</td></tr>
+          <tr><td><code>dns or dhcp</code></td><td><code>and</code>, <code>or</code>, <code>not</code> also work</td></tr>
+          <tr><td><code>ip.addr == 192.168.1.0/24</code></td><td>either address, with optional CIDR · <code>ip.src</code> <code>ip.dst</code> <code>eth.addr</code></td></tr>
+          <tr><td><code>len &gt; 1000</code> <code>ttl &lt; 5</code></td><td>numeric comparisons</td></tr>
+          <tr><td><code>tcp.flags.syn == 1</code></td><td>or just <code>syn</code>, <code>ack</code>, <code>fin</code>, <code>rst</code></td></tr>
+          <tr><td><code>info contains "GET"</code></td><td>substring in a field</td></tr>
+          <tr><td><code>example.com</code></td><td>bare text matches addresses, protocol and info</td></tr>
+        </tbody>
+      </table>
+      <p class="fine">Shortcuts: <kbd>/</kbd> focus filter · <kbd>↑</kbd><kbd>↓</kbd> or <kbd>j</kbd><kbd>k</kbd> move · <kbd>Esc</kbd> clear</p>
+      <div class="dlg-actions"><button class="btn" value="close" type="submit">Close</button></div>
+    </form>
+  </dialog>
+
+  <input type="file" id="fileInput" accept=".pcap,.pcapng,.cap,application/vnd.tcpdump.pcap" hidden>
+  <div class="dropveil" id="dropVeil" hidden><div>Drop to analyze</div></div>
+  <div class="busy" id="busy" role="status" hidden><div class="spin" aria-hidden="true"></div><span id="busyText">Working…</span></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <noscript><p class="noscript">Bavin Web needs JavaScript to analyze packets locally in your browser.</p></noscript>
+
+  <script src="js/util.js"></script>
+  <script src="js/dom.js"></script>
+  <script src="js/pcap.js"></script>
+  <script src="js/dissect.js"></script>
+  <script src="js/filter.js"></script>
+  <script src="js/samples.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/live.js"></script>
+  <script src="js/app.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>
