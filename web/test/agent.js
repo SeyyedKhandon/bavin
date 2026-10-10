@@ -173,6 +173,34 @@ function rawWs(port, token, origin) {
     a.close();
 
 
+    console.log('# standalone copy (curl -O) must not serve the folder it lives in');
+    {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bavin-standalone-'));
+      const sub = path.join(dir, 'Downloads'); fs.mkdirSync(sub);
+      fs.writeFileSync(path.join(dir, 'private-notes.txt'), 'SECRET-NOTES');
+      fs.writeFileSync(path.join(sub, 'bavin-agent.js'), fs.readFileSync(path.join(__dirname, '../agent/bavin-agent.js')));
+      const sa = spawn(process.execPath, [path.join(sub, 'bavin-agent.js'), '--port', '0', '--origin', 'https://demo.example.github.io/bavin/'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let so = '';
+      const sp2 = await new Promise((resolve, reject) => { sa.stdout.on('data', (d) => { so += d; const m = /#agent=(\d+)&token=([\w-]+)/.exec(so); if (m) resolve({ port: +m[1], token: m[2] }); }); sa.on('exit', () => reject(new Error('standalone agent exited'))); });
+      ok(/standalone copy/.test(so) && !/Open this link \(it carries your private token\) — it works in every browser/.test(so), 'banner says it has no web app and only offers the hosted link');
+      for (const u of ['/private-notes.txt', '/Downloads/bavin-agent.js', '/bavin-agent.js', '/..%2fprivate-notes.txt', '/index.html/../private-notes.txt']) {
+        const r = await get(sp2.port, u);
+        ok(!/SECRET-NOTES/.test(r.body.toString()) && !/Bavin capture agent v1/.test(r.body.toString()) && (u === '/index.html/../private-notes.txt' ? r.status !== 200 || !/SECRET/.test(r.body) : r.status === 404), 'refuses ' + u + ' → ' + r.status);
+      }
+      const root = await get(sp2.port, '/');
+      ok(root.status === 200 && /does not include the web app/.test(root.body.toString()) && !/SECRET/.test(root.body.toString()), 'GET / only returns a short "agent is running" page');
+      ok(await upgrade(sp2.port, '?token=' + sp2.token, { Origin: 'https://demo.example.github.io' }) === 101, 'the WebSocket still works for the hosted origin');
+      sa.kill('SIGINT'); fs.rmSync(dir, { recursive: true, force: true });
+    }
+
+    console.log('# repo copy serves only an allowlist');
+    for (const u of ['/README.md', '/agent/bavin-agent.js', '/test/run.js', '/js/../agent/bavin-agent.js', '/LICENSE.bak', '/.git/config']) {
+      const r = await get(port, u); ok(r.status === 404, 'not served: ' + u + ' → ' + r.status);
+    }
+    for (const u of ['/index.html', '/js/app.js', '/css/style.css', '/icons/icon-192.png', '/manifest.webmanifest', '/sw.js', '/favicon.svg']) {
+      const r = await get(port, u); ok(r.status === 200, 'served: ' + u);
+    }
+
     console.log('# --origin (hosted copy of the UI)');
     {
       const hostedOrigin = 'https://demo.example.github.io';

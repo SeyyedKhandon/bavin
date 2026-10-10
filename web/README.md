@@ -60,7 +60,7 @@ curl -O https://seyyedkhandon.github.io/bavin/agent/bavin-agent.js   # read it f
 sudo node bavin-agent.js --origin https://seyyedkhandon.github.io/bavin/
 ```
 
-It prints a link ending in `#agent=PORT&token=…`. Open it (or paste it into **Live → Connect**) and the hosted page connects to `ws://127.0.0.1:PORT`. The Live dialog generates these commands for whichever site you are on.
+It prints a link ending in `#agent=PORT&token=…`. **Open it**: the hosted page opens its Live dialog and connects to `ws://127.0.0.1:PORT` by itself (pasting the link into **Live → Connect** is the fallback for another browser or window). The Live dialog generates these commands for whichever site you are on.
 
 Notes: the agent trusts *only* the origins you pass with `--origin` (https, or `http://localhost` for development) and still demands the token; the token travels in the URL fragment, which is never sent to any server. Safari blocks `https` pages from talking to `ws://127.0.0.1`, so use Chrome, Edge or Firefox for this, or the agent's own page. Recent Chrome versions may ask to allow “access to devices on your local network” — that is this connection.
 
@@ -80,7 +80,7 @@ The agent can see all your traffic, so it is deliberately paranoid:
 - the WebSocket requires a random token (printed once, passed in the URL *fragment*, which browsers never send over the network);
 - `Host` and `Origin` are checked, so other websites and DNS-rebinding tricks are rejected — only the agent's own page and sites you pass with `--origin` are trusted; only one browser tab may connect;
 - the capture tool is spawned without a shell, the interface must be one the tool listed, and the capture filter is validated and passed as a single argument;
-- only `web/` is served (not `agent/` or `test/`), with path-traversal protection.
+- the UI is served only when the agent sits inside the repository layout, and then only an allowlist (`index.html`, `sw.js`, the manifest, `css/`, `js/`, `icons/`) — never `agent/`, `test/` or whatever folder a downloaded copy happens to be in; a standalone copy serves a short info page and nothing else.
 
 `node web/test/agent.js` tests all of this.
 

@@ -89,6 +89,8 @@ curl -O https://seyyedkhandon.github.io/bavin/agent/bavin-agent.js     # read it
 sudo node bavin-agent.js --origin https://seyyedkhandon.github.io/bavin/
 ```
 
+Then just **open the link the agent prints** — the Live dialog opens and connects by itself. Nothing to copy or paste.
+
 The agent listens on `127.0.0.1` only, requires a private token, and checks `Host` and `Origin`. No privileges? `--replay some.pcap` streams a file as if it were live. Everything is explained in the **[guide](docs/GUIDE.md#live-capture)**.
 
 ## Protocols

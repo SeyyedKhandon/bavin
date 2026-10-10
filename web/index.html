@@ -175,9 +175,10 @@
               <div class="cmd"><pre><code id="cmdFetch"></code></pre><button class="btn ghost small copy" type="button" data-copy="cmdFetch">Copy</button></div></li>
             <li><span>Run it, allowing this site:</span>
               <div class="cmd"><pre><code id="cmdRun"></code></pre><button class="btn ghost small copy" type="button" data-copy="cmdRun">Copy</button></div></li>
-            <li><span>Paste the link it prints:</span>
-              <div class="linkrow"><input id="liveLink" type="text" spellcheck="false" autocomplete="off" placeholder="https://…/#agent=8765&amp;token=…"><button class="btn small" id="liveConnect" type="button">Connect</button></div></li>
+            <li><span><b>Open the link it prints</b> (it ends in <code>#agent=…&amp;token=…</code>). Bavin connects by itself — nothing to paste.</span>
+              <div class="linkrow"><input id="liveLink" type="text" spellcheck="false" autocomplete="off" aria-label="Or paste the link here" placeholder="Opened it in another tab? Paste the link here instead"><button class="btn ghost small" id="liveConnect" type="button">Connect</button></div></li>
           </ol>
+          <p class="fine">Not connecting? If you started the agent from a copy of the repository it also prints a link starting with <code>http://127.0.0.1</code> — open that one instead. It is served by the agent itself and works in every browser.</p>
         </div>
         <div id="liveLocal">
           <div class="cmd"><pre><code id="cmdLocal">sudo node web/agent/bavin-agent.js</code></pre><button class="btn ghost small copy" type="button" data-copy="cmdLocal">Copy</button></div>

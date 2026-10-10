@@ -188,7 +188,7 @@ Watch traffic as it happens. A browser cannot read a network card, so a small **
 sudo node web/agent/bavin-agent.js
 ```
 
-It prints a link ending in `#token=…`. Open it, press **Live**, choose the interface (your Wi-Fi is usually `en0` on a Mac), optionally type a capture filter such as `tcp port 443`, and press **Start capturing**. Packets stream in. **Follow** keeps the newest packet in view (scroll up and it turns itself off). **Stop** ends it; **Save .pcap** writes what you captured; the newest 100,000 packets are kept.
+It prints a link ending in `#token=…`. **Open it** — the Live dialog opens and connects by itself. Choose the interface (your Wi-Fi is usually `en0` on a Mac), optionally type a capture filter such as `tcp port 443`, and press **Start capturing**. Packets stream in. **Follow** keeps the newest packet in view (scroll up and it turns itself off). **Stop** ends it; **Save .pcap** writes what you captured; the newest 100,000 packets are kept.
 
 ### With the online site
 
@@ -197,7 +197,7 @@ curl -O https://seyyedkhandon.github.io/bavin/agent/bavin-agent.js    # one file
 sudo node bavin-agent.js --origin https://seyyedkhandon.github.io/bavin/
 ```
 
-The agent prints a link like `https://…/bavin/#agent=8765&token=…`. Open it, or paste it into **Live → Connect**. The Live dialog generates these commands for whatever site you are on.
+The agent prints a link like `https://…/bavin/#agent=8765&token=…`. **Just open it**: the Live dialog pops up already connected, with the interface picker ready — there is nothing to copy or paste. (If you opened the link in another browser or window, paste it into **Live → Connect** instead.) The Live dialog generates these two commands for whatever site you are on.
 
 ### Without admin rights
 
@@ -265,6 +265,8 @@ Copy the contents of `web/` (except `test/`) to the web root — nginx, Caddy, N
 | "Not a pcap or pcapng file" | Wrong file type (or a compressed `.gz`; decompress it). |
 | Live says *permission denied* | The agent is not running as an administrator. Restart it with `sudo` (macOS/Linux) or from an Administrator terminal (Windows). |
 | Live says *Could not connect to the agent* | The agent stopped, you opened an old link (the token changes on every start), the site was not passed with `--origin`, or another tab already holds the connection (only one is allowed). |
+| The agent says *standalone copy — it does not serve the web app* | Expected for the single downloaded file: it only talks to a Bavin site, so run it with `--origin https://…` and open the hosted link it prints. From a repository checkout it also serves the app itself. |
+| Live shows **"Connecting to the agent…"** and never finishes | The browser is holding the connection to `127.0.0.1`. Recent Chrome and Edge ask permission to "access devices on your local network" — look for the prompt near the address bar and choose **Allow**, then press **Connect** again (after 10 seconds Bavin gives up and says so). Brave Shields and some ad blockers also block it, and Safari blocks it from https pages. The reliable alternative: open the agent's **own** link, the one starting with `http://127.0.0.1`, which works in every browser. |
 | Live does nothing on the online site in Safari | Safari blocks https → `ws://127.0.0.1`. Use Chrome/Edge/Firefox, or open the agent's own link. |
 | No **Install** button | Needs https (or `localhost`), a supported browser, and not already installed. Safari uses *Add to Home Screen* / *Add to Dock* instead. |
 | A page works online but not from `file://` for Live/Install | By design: those need a served origin. Run `python3 -m http.server`. |

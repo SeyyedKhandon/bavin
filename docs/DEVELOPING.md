@@ -94,7 +94,7 @@ Messages (JSON text frames; capture bytes are binary frames):
 | page → agent | `{type:'stop'}` → `{type:'stopped', reason}` |
 | agent → page | `{type:'error', message}` at any time; `{type:'stopped', reason:'ended'\|'error'}` when the tool exits |
 
-**Invariants — do not break them:** `started` must be sent *before* any capture bytes (the page creates its parser on it); the agent listens on `127.0.0.1` only; the WebSocket demands the token, a matching `Host`, and an `Origin` that is the agent's own or one given with `--origin`; one client at a time; the interface must come from the tool's own list; the filter is validated and passed as a single argv element; HTTP-server sockets are half-open, so treat `'end'` as a disconnect.
+**Invariants — do not break them:** `started` must be sent *before* any capture bytes (the page creates its parser on it); the agent listens on `127.0.0.1` only; the WebSocket demands the token, a matching `Host`, and an `Origin` that is the agent's own or one given with `--origin`; one client at a time; the interface must come from the tool's own list; the filter is validated and passed as a single argv element; static files are served only from the repository layout and only from an allowlist (a standalone copy serves none); HTTP-server sockets are half-open, so treat `'end'` as a disconnect.
 
 `--replay FILE` feeds a capture through the same pipeline on a virtual clock (batched, back-pressured), which is how the live path is tested without privileges.
 

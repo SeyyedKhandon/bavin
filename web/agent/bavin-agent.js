@@ -28,6 +28,13 @@ const { spawn, execFile } = require('child_process');
 
 const VERSION = 1;
 const WEB_ROOT = path.resolve(__dirname, '..');
+// The agent can serve the Bavin web UI itself — but ONLY when it sits inside the repository layout (web/agent/ next to
+// web/index.html). A copy downloaded on its own (curl -O) must never serve the folder it happens to live in.
+const HAS_UI = path.basename(__dirname) === 'agent' && fs.existsSync(path.join(WEB_ROOT, 'index.html')) && fs.existsSync(path.join(WEB_ROOT, 'js', 'app.js'));
+// Even then, serve an explicit allowlist, not "everything under web/".
+const UI_FILES = new Set(['index.html', 'sw.js', 'manifest.webmanifest', 'favicon.svg', 'LICENSE']);
+const UI_DIRS = new Set(['css', 'js', 'icons']);
+const STANDALONE_PAGE = '<!doctype html><meta charset="utf-8"><title>Bavin capture agent</title><body style="font:15px system-ui;max-width:42em;margin:3em auto;padding:0 1em"><h1>Bavin capture agent is running</h1><p>This copy of the agent does not include the web app, so there is nothing to open here.</p><p>Open the Bavin web app and use the <b>link printed in your terminal</b> (the one that ends in <code>#agent=…&amp;token=…</code>).</p></body>';
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.pcap': 'application/vnd.tcpdump.pcap' };
 
 // ───────────────────────────── CLI ─────────────────────────────
@@ -206,11 +213,16 @@ async function main() {
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, sec); return res.end('Method not allowed'); }
     let rel;
     try { rel = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch (_) { res.writeHead(400, sec); return res.end('Bad request'); }
+    if (!HAS_UI) { // standalone copy: no files are served, ever
+      if (rel === '/' || rel === '/index.html') { res.writeHead(200, Object.assign({ 'Content-Type': 'text/html; charset=utf-8' }, sec)); return res.end(req.method === 'HEAD' ? undefined : STANDALONE_PAGE); }
+      res.writeHead(404, sec); return res.end('Not found');
+    }
     if (rel.endsWith('/')) rel += 'index.html';
     const file = path.resolve(WEB_ROOT, '.' + path.sep + rel);
     const within = path.relative(WEB_ROOT, file);
-    const top = within.split(path.sep)[0];
-    if (within.startsWith('..') || path.isAbsolute(within) || top === 'agent' || top === 'test' || within.split(path.sep).some((s) => s.startsWith('.')) || rel.includes('\0')) {
+    const parts = within.split(path.sep);
+    const allowed = UI_FILES.has(parts[0]) && parts.length === 1 || UI_DIRS.has(parts[0]) && parts.length > 1;
+    if (within.startsWith('..') || path.isAbsolute(within) || !allowed || parts.some((p) => p.startsWith('.')) || rel.includes('\0')) {
       res.writeHead(404, sec); return res.end('Not found');
     }
     fs.readFile(file, (err, data) => {
@@ -329,10 +341,12 @@ async function main() {
   allowedHosts = new Set(['127.0.0.1:' + port, 'localhost:' + port]);
   const url = 'http://127.0.0.1:' + port + '/#token=' + token;
   console.log('Bavin capture agent v' + VERSION);
+  if (!HAS_UI) console.log('  note:    standalone copy — it does not serve the web app. Use the hosted link below' + (opts.origins.length ? '.' : ' (restart with --origin https://… for the site you want to use).'));
   console.log(replay ? '  mode:    replay of ' + opts.replay + ' (' + replay.packets.length + ' packets)' : tool ? '  capture: ' + tool.kind + ' (' + tool.bin + ')' + (process.getuid && process.getuid() !== 0 ? '   ⚠ not running as root — capture will likely be denied' : '') : '  capture: no tool found (install tcpdump or Wireshark, or use --replay FILE)');
   console.log('  listens: 127.0.0.1:' + port + ' only');
-  console.log('\n  Open this URL (it contains your private token):\n\n    ' + url + '\n');
-  for (const o of opts.origins) console.log('  Or use the hosted copy at ' + o.url + ' with:\n\n    ' + o.url + '#agent=' + port + '&token=' + token + '\n');
+  if (HAS_UI) console.log('\n  Open this link (it carries your private token) — it works in every browser:\n\n    ' + url + '\n');
+  for (const o of opts.origins) console.log((HAS_UI ? '  Or, to use the hosted site at ' + o.url + ', open:' : '\n  Open this link (it carries your private token):') + '\n\n    ' + o.url + '#agent=' + port + '&token=' + token + '\n');
+  if (!HAS_UI && !opts.origins.length) console.log('\n  No link to open: this copy has no web app and no --origin was given.\n  Restart it as:  sudo node bavin-agent.js --origin https://<your-bavin-site>/\n');
   if (opts.origins.length) console.log('  (The token stays in the URL fragment, which browsers never send over the network.)\n');
   if (opts.open) {
     const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';

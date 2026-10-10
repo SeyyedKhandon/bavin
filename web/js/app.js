@@ -547,9 +547,12 @@
   }
 
   async function connectAgent(silent) {
+    if (L.state === 'connecting' && !silent && L.client) { L.client.disconnect(); L.client = null; setLiveState('off'); } // Connect pressed again: restart a stalled attempt
     if (L.state === 'connecting' || L.state === 'ready' || L.state === 'capturing' || L.state === 'stopped') return;
-    L.client = new B.live.LiveClient({
+    // Each attempt owns its client. If the user restarts a stalled attempt, the abandoned one must not touch shared state.
+    const mine = L.client = new B.live.LiveClient({
       onHello: (m) => { L.tool = m.tool; },
+      onSlow: () => liveStatus('Still connecting… your browser may be asking permission to access devices on your local network — look for a prompt near the address bar and choose Allow.'),
       onInterfaces: (list) => {
         L.ifaces = list;
         const sel = clear($('liveIface'));
@@ -561,14 +564,16 @@
       onPackets: (raws) => { for (const r of raws) L.pending.push(r); scheduleFlush(); },
       onStopped: (m) => endLive(m.reason),
       onError: (msg) => { if ($('liveDlg').open) $('liveErr').textContent = msg; else toast(msg, true); },
-      onClose: () => { const was = L.state; flushLive(); setLiveState('off'); L.client = null; if (was === 'capturing') endLive('disconnected'); renderLiveDialog(); toast('The capture agent disconnected.', true); },
+      onClose: () => { if (L.client !== mine) return; const was = L.state; flushLive(); setLiveState('off'); L.client = null; if (was === 'capturing') endLive('disconnected'); renderLiveDialog(); toast('The capture agent disconnected.', true); },
     });
     setLiveState('connecting'); renderLiveDialog();
     try {
-      await L.client.connect();
+      await mine.connect();
+      if (L.client !== mine) return; // superseded by a newer attempt
       setLiveState('ready');
-      L.client.list();
+      mine.list();
     } catch (e) {
+      if (L.client !== mine) return; // superseded: the newer attempt reports its own outcome
       setLiveState('off'); L.client = null;
       renderLiveDialog();
       if (!silent) $('liveErr').textContent = e.message; // shown after the redraw below, which must not wipe it
@@ -657,7 +662,7 @@
   }
 
   function initLive() {
-    B.live.takeConnection();
+    const firstLink = B.live.takeConnection();
     $('btnLive').addEventListener('click', () => { $('liveErr').textContent = ''; renderLiveDialog(); $('liveDlg').showModal(); if (B.live.hasConnection()) connectAgent(false); });
     $('btnLive2').addEventListener('click', () => $('btnLive').click());
     $('liveStart').addEventListener('click', () => {
@@ -678,12 +683,16 @@
     $('liveStop').addEventListener('click', () => { if (L.client) L.client.stop(); });
     $('liveSave').addEventListener('click', saveLive);
     $('liveFollow').addEventListener('change', (e) => setFollow(e.target.checked));
-    if (B.live.agentAvailable() && B.live.hasConnection()) connectAgent(true); // opened via the agent's link: connect quietly
+    // Opening the link the agent printed is the whole setup: show the Live dialog and connect (progress and errors visible).
+    const openForLink = () => { $('liveErr').textContent = ''; renderLiveDialog(); if (!$('liveDlg').open) $('liveDlg').showModal(); connectAgent(false); };
+    if (B.live.agentAvailable() && B.live.hasConnection()) { if (firstLink && firstLink.fresh) openForLink(); else connectAgent(true); }
     // The same link opened in a tab that already shows the site only changes the #fragment (no reload) — pick it up.
     window.addEventListener('hashchange', () => {
-      if (!/token=/.test(location.hash) || !B.live.takeConnection()) return;
-      if (L.client && L.state === 'ready') return; // already connected
-      connectAgent(true);
+      if (!/token=/.test(location.hash)) return;
+      const c = B.live.takeConnection();
+      if (!c || !c.fresh) return;
+      if (L.client && (L.state === 'ready' || L.state === 'capturing')) { if (!$('liveDlg').open && L.state === 'ready') { renderLiveDialog(); $('liveDlg').showModal(); } return; } // already connected
+      openForLink();
     });
   }
 

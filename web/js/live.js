@@ -23,6 +23,7 @@
   // Read the connection details from the URL hash, remember them for reloads, and scrub the URL.
   function takeConnection() {
     let c = parseFragment(location.hash);
+    const fresh = !!c; // arrived via a link the agent printed (as opposed to being remembered from this tab)
     if (c) {
       try { sessionStorage.setItem('bavin-conn', JSON.stringify(c)); } catch (_) { /* private mode */ }
       try { history.replaceState(null, '', location.pathname + location.search); } catch (_) { /* ignore */ }
@@ -30,7 +31,7 @@
       try { c = JSON.parse(sessionStorage.getItem('bavin-conn') || 'null'); } catch (_) { c = null; }
     }
     conn = c;
-    return c;
+    return c ? Object.assign({ fresh }, c) : null;
   }
   // Accept whatever the user pastes: the full link the agent printed, or just "#agent=…&token=…".
   function setConnectionFromText(text) {
@@ -48,7 +49,7 @@
   const wsUrl = () => (conn && conn.port ? 'ws://127.0.0.1:' + conn.port : 'ws://' + location.host) + '/ws?token=' + encodeURIComponent(conn.token);
 
   class LiveClient {
-    // handlers: onHello, onInterfaces, onStarted, onStopped, onError, onPackets, onClose
+    // handlers: onHello, onInterfaces, onStarted, onStopped, onError, onPackets, onClose, onSlow
     constructor(h) { this.h = h; this.ws = null; this.parser = null; this.open = false; }
 
     connect() {
@@ -59,9 +60,21 @@
         const ws = new WebSocket(wsUrl());
         ws.binaryType = 'arraybuffer';
         this.ws = ws;
-        ws.onopen = () => { this.open = true; settled = true; resolve(); };
-        ws.onerror = () => { if (!settled) { settled = true; reject(new Error('Could not connect to the agent. Check that it is still running, that the link is the one it printed this time (the token changes on every start), that it was started with --origin for this site, and that no other tab is connected.')); } };
-        ws.onclose = () => { const was = this.open; this.open = false; if (!settled) { settled = true; reject(new Error('The agent refused the connection.')); } else if (was) this.h.onClose && this.h.onClose(); };
+        const finish = (fn, arg) => { if (settled) return false; settled = true; clearTimeout(slow); clearTimeout(dead); fn(arg); return true; };
+        // A browser can hold a connection to 127.0.0.1 open-but-pending (for example while it waits for you to answer a
+        // "connect to devices on your local network" prompt). Say so after a moment, and give up after a while.
+        const slow = setTimeout(() => { if (!settled && this.h.onSlow) this.h.onSlow(); }, LiveClient.SLOW_MS);
+        const dead = setTimeout(() => finish(reject, new Error(
+          'The browser did not finish connecting to the agent (' + Math.round(LiveClient.TIMEOUT_MS / 1000) + ' s). '
+          + 'If it asked for permission to access devices on your local network, allow it and press Connect again. '
+          + 'Brave Shields, ad blockers and Safari can block connections to 127.0.0.1 from a website. '
+          + 'The agent also prints its own link (starting with http://127.0.0.1) — opening that always works.')), LiveClient.TIMEOUT_MS);
+        ws.onopen = () => { this.open = true; finish(resolve); };
+        ws.onerror = () => finish(reject, new Error('Could not connect to the agent. Check that it is still running, that the link is the one it printed this time (the token changes on every start), that it was started with --origin for this site, and that no other tab is connected.'));
+        ws.onclose = () => {
+          const was = this.open; this.open = false;
+          if (!finish(reject, new Error('The agent refused the connection.')) && was) this.h.onClose && this.h.onClose();
+        };
         ws.onmessage = (e) => this.onMessage(e.data);
       });
     }
@@ -89,6 +102,9 @@
     stop() { this.send({ type: 'stop' }); }
     disconnect() { if (this.ws) { this.open = false; try { this.ws.close(); } catch (_) { /* ignore */ } } }
   }
+
+  LiveClient.SLOW_MS = 2500;      // show the "still connecting" hint
+  LiveClient.TIMEOUT_MS = 10000;  // give up
 
   B.live = { LiveClient, agentAvailable, hasConnection, takeConnection, setConnectionFromText, sameOriginAgent };
 })(window.Bavin);
