@@ -3,6 +3,7 @@
 // Starts the capture agent in --replay mode (no privileges needed) and exercises its HTTP/WebSocket surface.
 'use strict';
 const { spawn } = require('child_process');
+let crypto = require('crypto');
 const http = require('http');
 const fs = require('fs');
 const os = require('os');
@@ -72,6 +73,7 @@ function rawWs(port, token, origin) {
         const h = p.length < 126 ? Buffer.from([0x81, 0x80 | p.length]) : Buffer.from([0x81, 0x80 | 126, p.length >> 8, p.length & 255]);
         socket.write(Buffer.concat([h, m, Buffer.from(p.map((x, i) => x ^ m[i & 3]))]));
       };
+      c.socket = socket;
       c.close = () => socket.destroy();
       resolve(c);
     });
@@ -166,6 +168,51 @@ function rawWs(port, token, origin) {
     ok(got.length >= n0 + 3, 'a second capture can start after the first finished, and be stopped');
     ws.close();
 
+    console.log('# WebSocket protocol violations');
+    {
+      const frameOut = (op, payload, { masked = true, fin = true } = {}) => {
+        const m = crypto.randomBytes(4); const n = payload.length;
+        const head = n < 126 ? Buffer.from([(fin ? 0x80 : 0) | op, (masked ? 0x80 : 0) | n]) : Buffer.from([(fin ? 0x80 : 0) | op, (masked ? 0x80 : 0) | 126, n >> 8, n & 255]);
+        return masked ? Buffer.concat([head, m, Buffer.from(payload.map((x, i) => x ^ m[i & 3]))]) : Buffer.concat([head, payload]);
+      };
+      const closedWith = async (label, bytes, expectCode) => {
+        await new Promise((r) => setTimeout(r, 150));
+        const c = await rawWs(port, token, origin);
+        const got = []; let ended = false;
+        c.socket.on('data', (d) => got.push(d)); c.socket.on('close', () => { ended = true; });
+        c.socket.write(bytes);
+        await new Promise((r) => setTimeout(r, 300));
+        // The server's first frame is its hello; walk the frames to find the close frame (opcode 8) and its status code.
+        const all = Buffer.concat(got); let code = null;
+        for (let o = 0; o + 2 <= all.length;) {
+          const op = all[o] & 15; let len = all[o + 1] & 127, hdr = 2;
+          if (len === 126) { len = all.readUInt16BE(o + 2); hdr = 4; } else if (len === 127) { len = Number(all.readBigUInt64BE(o + 2)); hdr = 10; }
+          if (op === 8 && len >= 2) { code = all.readUInt16BE(o + hdr); break; }
+          o += hdr + len;
+        }
+        ok(ended && code === expectCode, label + ' → connection closed with code ' + code);
+        c.socket.destroy();
+      };
+      crypto = require('crypto');
+      await closedWith('an unmasked client frame', frameOut(1, Buffer.from('{"type":"list"}'), { masked: false }), 1002);
+      await closedWith('a ping with a 200-byte payload (limit is 125)', frameOut(9, Buffer.alloc(200, 1)), 1002);
+      await closedWith('a fragmented control frame', frameOut(9, Buffer.from('x'), { fin: false }), 1002);
+      await closedWith('an unknown opcode (0x3)', frameOut(3, Buffer.from('x')), 1002);
+      await closedWith('a fragmented text message', frameOut(1, Buffer.from('{"type":"list"}'), { fin: false }), 1003);
+      await closedWith('a 2 MB frame header', Buffer.concat([Buffer.from([0x81, 0xff]), Buffer.alloc(8, 0).fill(0, 0, 8), Buffer.alloc(4)]).fill(0x00, 2, 10) && (() => { const h = Buffer.alloc(14); h[0] = 0x81; h[1] = 0xff; h.writeBigUInt64BE(2097152n, 2); return h; })(), 1009);
+      // after the agent has closed on a violation it must not keep buffering what the peer keeps sending
+      await new Promise((r) => setTimeout(r, 150));
+      const c = await rawWs(port, token, origin); c.socket.write(frameOut(3, Buffer.from('x')));
+      await new Promise((r) => setTimeout(r, 100));
+      for (let i = 0; i < 50; i++) c.socket.write(Buffer.alloc(20000, 7));
+      await new Promise((r) => setTimeout(r, 200));
+      ok(true, 'the agent survives a peer that keeps sending after being closed (no crash)');
+      c.socket.destroy();
+      await new Promise((r) => setTimeout(r, 150));
+      const alive = await rawWs(port, token, origin); alive.close();
+      ok(true, 'and still accepts the next legitimate connection');
+    }
+
     console.log('# single client');
     await new Promise((r) => setTimeout(r, 200));
     const a = await rawWs(port, token, origin);
@@ -246,6 +293,31 @@ function rawWs(port, token, origin) {
       await luntil(() => lt.filter((m) => m.type === 'error').length >= 2);
       ok(/cannot start with|not allowed/.test(lt.filter((m) => m.type === 'error')[1].message), 'a hostile filter is rejected before anything is spawned');
       lws.close(); live.kill('SIGINT');
+    }
+
+    console.log('# symlinks cannot lead out of the web root');
+    {
+      const base = fs.mkdtempSync(path.join(os.tmpdir(), 'bavin-symlink-'));
+      const web = path.join(base, 'web'); fs.mkdirSync(path.join(web, 'agent'), { recursive: true }); fs.mkdirSync(path.join(web, 'js'));
+      fs.writeFileSync(path.join(base, 'outside-secret.txt'), 'SECRET-OUTSIDE');
+      fs.writeFileSync(path.join(web, 'index.html'), '<title>x</title>'); fs.writeFileSync(path.join(web, 'js', 'app.js'), '//');
+      fs.symlinkSync(path.join(base, 'outside-secret.txt'), path.join(web, 'js', 'leak.js'));
+      fs.writeFileSync(path.join(web, 'js', 'inside-copy.js'), 'inside');
+      fs.symlinkSync(path.join(web, 'js', 'inside-copy.js'), path.join(web, 'js', 'ok-link.js'));
+      fs.writeFileSync(path.join(web, 'agent', 'bavin-agent.js'), fs.readFileSync(path.join(__dirname, '../agent/bavin-agent.js')));
+      const sl = spawn(process.execPath, [path.join(web, 'agent', 'bavin-agent.js'), '--port', '0'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let lo = '';
+      const lp = await new Promise((resolve, reject) => { sl.stdout.on('data', (d) => { lo += d; const m = /127\.0\.0\.1:(\d+)\/#token=/.exec(lo); if (m) resolve({ port: +m[1] }); }); sl.on('exit', () => reject(new Error('symlink agent exited'))); });
+      const leak = await get(lp.port, '/js/leak.js');
+      ok(leak.status === 404 && !/SECRET-OUTSIDE/.test(leak.body.toString()), 'a symlink pointing outside the web root is not followed → ' + leak.status);
+      ok((await get(lp.port, '/js/inside-copy.js')).status === 200 && (await get(lp.port, '/js/ok-link.js')).status === 200, 'normal files and links that stay inside are still served');
+      sl.kill('SIGINT'); fs.rmSync(base, { recursive: true, force: true });
+    }
+
+    console.log('# startup argument checks');
+    for (const [args, why] of [[['--port', '80'], 'privileged port 80'], [['--port', '1023'], 'port 1023'], [['--port', '70000'], 'port 70000'], [['--port', 'abc'], 'non-numeric port'], [['--speed', '0'], 'zero speed']]) {
+      const r = require('child_process').spawnSync(process.execPath, [path.join(__dirname, '../agent/bavin-agent.js'), ...args]);
+      ok(r.status === 2, 'refuses ' + why);
     }
 
     console.log('# filter validation');

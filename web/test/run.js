@@ -173,6 +173,59 @@ console.log('\n# real tcpdump output');
   }
 }
 
+console.log('\n# hostile captures');
+{
+  const H = samples.helpers;
+  const { cat, be16, be32, ip4, ethernet, ipv4, udp, mac } = H;
+  const build = (frame) => dissect.dissectAll([{ ts: 0, data: frame, origLen: frame.length, linktype: 1 }])[0];
+  const total = (p) => p.layers.reduce((a, l) => a + l.fields.length, 0);
+  // thousands of tiny entries in one ~56 KB packet must not become thousands of UI elements
+  const fixed = cat(Uint8Array.of(1, 1, 6, 0), be32(1), be16(0), be16(0), new Uint8Array(16), mac('a4:77:33:12:5b:90'), new Uint8Array(202), be32(0x63825363));
+  const opts = []; for (let i = 0; i < 19000; i++) opts.push(Uint8Array.of(12, 1, 0x41));
+  const dhcp = build(ethernet('ff:ff:ff:ff:ff:ff', 'a4:77:33:12:5b:90', 0x0800, ipv4('0.0.0.0', '255.255.255.255', 17, udp('0.0.0.0', '255.255.255.255', 68, 67, cat(fixed, ...opts, Uint8Array.of(255))))));
+  ok(total(dhcp) < 400, 'DHCP with 19,000 options → ' + total(dhcp) + ' fields (capped)');
+  ok(dhcp.layers.find((l) => l.id === 'dhcp').hidden > 18000, 'the layer records how many entries were not shown');
+  const recs = []; for (let i = 0; i < 7000; i++) recs.push(cat(Uint8Array.of(1, 0), be16(0), ip4('224.0.' + (i >> 8) + '.' + (i & 255))));
+  const igmp = build(ethernet('01:00:5e:00:00:16', 'a4:77:33:12:5b:90', 0x0800, ipv4('10.0.0.1', '224.0.0.22', 2, cat(Uint8Array.of(0x22, 0, 0, 0), be16(0), be16(7000), ...recs))));
+  ok(total(igmp) < 400, 'IGMPv3 with 7,000 group records → ' + total(igmp) + ' fields (capped)');
+  const ra = []; for (let i = 0; i < 7000; i++) ra.push(Uint8Array.of(1, 1, 1, 2, 3, 4, 5, 6));
+  const rap = build(ethernet('33:33:00:00:00:01', 'a4:77:33:12:5b:90', 0x86dd, H.ipv6('fe80::1', 'ff02::1', 58, cat(Uint8Array.of(134, 0, 0, 0, 64, 0), be16(1800), be32(0), be32(0), ...ra))));
+  ok(total(rap) < 400, 'ICMPv6 RA with 7,000 options → ' + total(rap) + ' fields (capped)');
+  let hdr = 'GET / HTTP/1.1\r\n'; for (let i = 0; i < 30000; i++) hdr += 'X' + i + ': v\r\n';
+  const http = build(ethernet('00:00:00:00:00:01', '00:00:00:00:00:02', 0x0800, ipv4('10.0.0.1', '10.0.0.2', 6, H.tcp('10.0.0.1', '10.0.0.2', 1, 80, 1, 1, 0x18, new TextEncoder().encode(hdr).subarray(0, 60000)))));
+  ok(total(http) < 400, 'HTTP with 30,000 header lines → ' + total(http) + ' fields (capped)');
+  ok(total(dissect.dissectAll(samples.LIST[0].make().slice(7, 8))[0]) > 20, 'normal packets are not affected by the cap');
+
+  // mutation fuzzing: flip bytes, inflate length fields, splice garbage, truncate. Must never throw or crawl.
+  const base = [].concat(...samples.LIST.map((s) => s.make()));
+  let seed = 424242; const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; const ri = (n) => Math.floor(rnd() * n);
+  let threw = 0, slow = 0; const t0 = Date.now();
+  for (let i = 0; i < 60000; i++) {
+    let d = Uint8Array.from(base[ri(base.length)].data);
+    const mode = ri(5);
+    if (mode === 0) for (let k = 0, n = 1 + ri(4); k < n; k++) d[ri(d.length)] = ri(256);
+    else if (mode === 1) for (let k = 0, n = 1 + ri(3); k < n; k++) { const o = ri(d.length - 1); d[o] = 0xff; d[o + 1] = 0xff; }
+    else if (mode === 2) d = d.subarray(0, ri(d.length + 1));
+    else if (mode === 3) { const o = ri(d.length); d = Uint8Array.from([...d.subarray(0, o), ...Array.from({ length: ri(40) }, () => ri(256)), ...d.subarray(o)]); }
+    else { const o = 12 + ri(Math.max(1, d.length - 12)); d[o] = 0xc0; d[o + 1] = 0x0c; }
+    const s = Date.now();
+    try { dissect.dissectAll([{ ts: 0, data: d, origLen: d.length, linktype: 1 }]); } catch (e) { threw++; if (threw < 3) console.error(e.stack); }
+    if (Date.now() - s > 50) slow++;
+  }
+  ok(threw === 0 && slow === 0, '60,000 mutated packets: ' + threw + ' exceptions, ' + slow + ' slower than 50 ms (' + (Date.now() - t0) + ' ms total)');
+
+  // a malformed capture file must be rejected, not crash or hang
+  const evilPcap = new Uint8Array(24 + 16); const dv = new DataView(evilPcap.buffer);
+  dv.setUint32(0, 0xa1b2c3d4, false); dv.setUint32(20, 1, false); dv.setUint32(24 + 8, 0xffffffff, false); // one record claiming 4 GB
+  ok(pcap.parse(evilPcap.buffer).packets.length === 0, 'a pcap record claiming 4 GB is ignored safely');
+  let sp = new pcap.StreamParser(), msg = '';
+  try { sp.push(evilPcap.subarray(0, 24)); sp.push(evilPcap.subarray(24)); } catch (e) { msg = e.message; }
+  ok(/Corrupt capture stream/.test(msg), 'the live stream parser refuses an absurd record size: ' + msg);
+  const evilNg = new Uint8Array(32); new DataView(evilNg.buffer).setUint32(0, 0x0a0d0d0a, false); new DataView(evilNg.buffer).setUint32(4, 0xffffffff, false);
+  let ngMsg = ''; try { pcap.parse(evilNg.buffer); } catch (e) { ngMsg = e.message; }
+  ok(ngMsg.length > 0, 'a pcapng block with a bogus length is rejected without looping: ' + ngMsg);
+}
+
 console.log('\n# installable app (PWA)');
 {
   const webDir = path.join(__dirname, '..');

@@ -79,6 +79,7 @@ The agent can see all your traffic, so it is deliberately paranoid:
 - listens on `127.0.0.1` only — never a public interface;
 - the WebSocket requires a random token (printed once, passed in the URL *fragment*, which browsers never send over the network);
 - `Host` and `Origin` are checked, so other websites and DNS-rebinding tricks are rejected — only the agent's own page and sites you pass with `--origin` are trusted; only one browser tab may connect;
+- the page connects only to `127.0.0.1` on ports 1024–65535, and treats the other end as an agent only after it answers with a `hello` message — a crafted link naming some other local service is dropped without a single command being sent;
 - the capture tool is spawned without a shell, the interface must be one the tool listed, and the capture filter is validated and passed as a single argument;
 - the UI is served only when the agent sits inside the repository layout, and then only an allowlist (`index.html`, `sw.js`, the manifest, `css/`, `js/`, `icons/`) — never `agent/`, `test/` or whatever folder a downloaded copy happens to be in; a standalone copy serves a short info page and nothing else.
 

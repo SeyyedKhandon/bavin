@@ -16,7 +16,8 @@
     const token = q.get('token');
     const port = q.get('agent');
     if (!token || !/^[\w-]{16,64}$/.test(token)) return null;
-    if (port && !/^\d{2,5}$/.test(port)) return null;
+    if (port && !/^\d{4,5}$/.test(port)) return null;
+    if (port && (Number(port) < 1024 || Number(port) > 65535)) return null; // never poke privileged/system ports from a link
     return { token, port: port ? Number(port) : null };
   }
 
@@ -69,13 +70,36 @@
           + 'If it asked for permission to access devices on your local network, allow it and press Connect again. '
           + 'Brave Shields, ad blockers and Safari can block connections to 127.0.0.1 from a website. '
           + 'The agent also prints its own link (starting with http://127.0.0.1) — opening that always works.')), LiveClient.TIMEOUT_MS);
-        ws.onopen = () => { this.open = true; finish(resolve); };
+        // The connection only counts once the other end says hello like a Bavin agent. A link can name any local port, so
+        // we must not start talking to (or trusting) whatever service happens to be there.
+        let helloTimer = 0, gotHello = false;
+        ws.onopen = () => {
+          this.open = true;
+          helloTimer = setTimeout(() => { if (!gotHello) { finish(reject, new Error('Something is listening on that port but it did not answer like a Bavin agent.')); try { ws.close(); } catch (_) { /* ignore */ } } }, LiveClient.HELLO_MS);
+        };
         ws.onerror = () => finish(reject, new Error('Could not connect to the agent. Check that it is still running, that the link is the one it printed this time (the token changes on every start), that it was started with --origin for this site, and that no other tab is connected.'));
         ws.onclose = () => {
+          clearTimeout(helloTimer);
           const was = this.open; this.open = false;
           if (!finish(reject, new Error('The agent refused the connection.')) && was) this.h.onClose && this.h.onClose();
         };
-        ws.onmessage = (e) => this.onMessage(e.data);
+        ws.onmessage = (e) => {
+          if (!gotHello) {
+            let m = null;
+            if (typeof e.data === 'string') { try { m = JSON.parse(e.data); } catch (_) { m = null; } }
+            if (!m || m.type !== 'hello' || typeof m.version !== 'number') {
+              clearTimeout(helloTimer);
+              finish(reject, new Error('Whatever is listening on that port is not a Bavin agent.'));
+              try { ws.close(); } catch (_) { /* ignore */ }
+              return;
+            }
+            gotHello = true; clearTimeout(helloTimer);
+            if (this.h.onHello) this.h.onHello(m);
+            finish(resolve);
+            return;
+          }
+          this.onMessage(e.data);
+        };
       });
     }
 
@@ -105,6 +129,7 @@
 
   LiveClient.SLOW_MS = 2500;      // show the "still connecting" hint
   LiveClient.TIMEOUT_MS = 10000;  // give up
+  LiveClient.HELLO_MS = 3000;     // a real agent greets immediately
 
   B.live = { LiveClient, agentAvailable, hasConnection, takeConnection, setConnectionFromText, sameOriginAgent };
 })(window.Bavin);

@@ -39,10 +39,14 @@
     return l;
   }
   function grp(l, title) { l._g = title; }
+  // A crafted packet can hold thousands of tiny entries (DHCP options, IGMPv3 records …). Cap what a layer shows so one
+  // hostile capture cannot make the UI build tens of thousands of elements; the count of the rest is kept in l.hidden.
+  const FIELD_CAP = 150;
   function fld(l, name, off, len, value, hint) {
     const f = { name, off, len, value: String(value) };
     if (hint) f.hint = hint;
     if (l._g) f.group = l._g;
+    if (l.fields.length >= FIELD_CAP) { l.hidden = (l.hidden || 0) + 1; return f; } // detached: callers may still set hints on it
     l.fields.push(f);
     return f;
   }

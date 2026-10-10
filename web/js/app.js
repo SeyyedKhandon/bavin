@@ -189,7 +189,8 @@
   }
 
   function exportCsv() {
-    const q = (s) => '"' + String(s).replace(/"/g, '""') + '"';
+    // Cells that start with = + - @ (or a control character) are executed as formulas by spreadsheets; packet text is attacker-controlled.
+    const q = (s) => { let t = String(s); if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; return '"' + t.replace(/"/g, '""') + '"'; };
     const lines = ['No,Time,Source,Destination,Protocol,Length,Info'];
     for (const p of S.view) lines.push([p.no, p.rel.toFixed(6), q(p.src), q(p.dst), p.proto, p.len, q(p.info)].join(','));
     downloadBlob(lines.join('\n'), S.name.replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_') + '.csv', 'text/csv');
@@ -313,6 +314,7 @@
       if (f.group !== lastGroup) { lastGroup = f.group; if (f.group) grid.appendChild(h('div', { class: 'group' }, f.group)); }
       grid.appendChild(fieldTile(f, l));
     }
+    if (l.hidden) grid.appendChild(h('div', { class: 'fld wide' }, h('span', { class: 'k' }, 'Not shown'), h('span', { class: 'v' }, l.hidden.toLocaleString() + ' more entries — this layer has an unusually large number of fields')));
     body.appendChild(grid);
     card.append(hd, body);
     return card;

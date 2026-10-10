@@ -1,5 +1,6 @@
 # Publishes the web version (web/) to GitHub Pages: https://<user>.github.io/<repo>/
 # One-time setup: repo Settings → Pages → Build and deployment → Source: "GitHub Actions".
+# Third-party actions are pinned to full commit SHAs (the version is in the comment) so a moved tag cannot change what runs.
 name: Deploy web version
 
 on:
@@ -10,10 +11,9 @@ on:
     paths: ['web/**', '.github/workflows/pages.yml']
   workflow_dispatch:
 
+# Least privilege: nothing is writable by default; the deploy job opts in to exactly what it needs.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages-${{ github.ref }}
@@ -23,8 +23,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Dissectors, pcap/pcapng, filters, PWA assets
@@ -36,18 +36,22 @@ jobs:
     needs: test
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write       # publish to GitHub Pages
+      id-token: write    # OIDC token required by actions/deploy-pages
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Assemble site (everything in web/ except the tests)
         run: |
           mkdir _site
           rsync -a --exclude 'test' --exclude 'README.md' web/ _site/
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: _site
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

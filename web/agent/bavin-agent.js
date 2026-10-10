@@ -28,6 +28,8 @@ const { spawn, execFile } = require('child_process');
 
 const VERSION = 1;
 const WEB_ROOT = path.resolve(__dirname, '..');
+let WEB_ROOT_REAL = WEB_ROOT;
+try { WEB_ROOT_REAL = fs.realpathSync(WEB_ROOT); } catch (_) { /* resolved per request below */ }
 // The agent can serve the Bavin web UI itself — but ONLY when it sits inside the repository layout (web/agent/ next to
 // web/index.html). A copy downloaded on its own (curl -O) must never serve the folder it happens to live in.
 const HAS_UI = path.basename(__dirname) === 'agent' && fs.existsSync(path.join(WEB_ROOT, 'index.html')) && fs.existsSync(path.join(WEB_ROOT, 'js', 'app.js'));
@@ -52,7 +54,7 @@ function parseArgs(argv) {
     else if (a === '--help' || a === '-h') o.help = true;
     else fail('Unknown option ' + a + ' (try --help)');
   }
-  if (!Number.isInteger(o.port) || o.port < 0 || o.port > 65535) fail('--port must be 0-65535');
+  if (!Number.isInteger(o.port) || o.port > 65535 || (o.port !== 0 && o.port < 1024)) fail('--port must be 1024-65535 (or 0 for a random free port)');
   if (!(o.speed > 0)) fail('--speed must be positive');
   return o;
 }
@@ -70,7 +72,7 @@ function fail(msg) { console.error('bavin-agent: ' + msg); process.exit(2); }
 const HELP = `Bavin capture agent v${VERSION}
 
 Usage: node bavin-agent.js [options]
-  --port N        port to listen on (default 8765, 0 = pick a free one)
+  --port N        port to listen on, 1024-65535 (default 8765, 0 = pick a free one)
   --replay FILE   stream a .pcap/.pcapng file as if it were live (needs no privileges)
   --speed X       replay speed multiplier (default 1)
   --loop          repeat the replay forever
@@ -142,7 +144,7 @@ function frame(op, payload) {
 }
 class WsConn {
   constructor(socket, onMessage, onClose) {
-    this.socket = socket; this.buf = Buffer.alloc(0); this.closed = false;
+    this.socket = socket; this.buf = Buffer.alloc(0); this.closed = false; this.dead = false;
     socket.on('data', (d) => this.onData(d));
     // HTTP-server sockets are half-open: a browser's FIN arrives as 'end' and 'close' never follows on its own.
     socket.on('end', () => { this.finish(); socket.destroy(); });
@@ -155,12 +157,14 @@ class WsConn {
   sendBinary(buf) { return this.write(frame(0x2, buf)); }
   write(b) { return !this.closed && this.socket.write(b); }
   close(code, reason) {
-    if (this.closed) return;
+    if (this.closed || this.dead) return;
+    this.dead = true; this.buf = Buffer.alloc(0); // stop buffering anything else the peer sends
     const p = Buffer.alloc(2 + Buffer.byteLength(reason || ''));
     p.writeUInt16BE(code || 1000, 0); p.write(reason || '', 2);
     this.socket.end(frame(0x8, p));
   }
   onData(d) {
+    if (this.dead) return;
     this.buf = Buffer.concat([this.buf, d]);
     for (;;) {
       const b = this.buf;
@@ -171,6 +175,7 @@ class WsConn {
       else if (len === 127) { if (b.length < 10) return; const big = b.readBigUInt64BE(2); if (big > 1048576n) return this.close(1009, 'too big'); len = Number(big); off = 10; }
       if (len > 1048576) return this.close(1009, 'too big');
       if (!masked) return this.close(1002, 'client frames must be masked');
+      if (op >= 0x8 && (len > 125 || !fin)) return this.close(1002, 'invalid control frame'); // RFC 6455 §5.5
       if (b.length < off + 4 + len) return;
       const mask = b.subarray(off, off + 4);
       const data = Buffer.from(b.subarray(off + 4, off + 4 + len));
@@ -180,6 +185,7 @@ class WsConn {
       if (op === 0x8) { this.close(1000); return; }
       if (op === 0x9) this.write(frame(0xa, data));
       else if (op === 0x1) this.onMessage(data.toString('utf8'));
+      else if (op !== 0x2 && op !== 0xa) return this.close(1002, 'unknown opcode'); // binary/pong are tolerated and ignored
     }
   }
 }
@@ -225,10 +231,15 @@ async function main() {
     if (within.startsWith('..') || path.isAbsolute(within) || !allowed || parts.some((p) => p.startsWith('.')) || rel.includes('\0')) {
       res.writeHead(404, sec); return res.end('Not found');
     }
-    fs.readFile(file, (err, data) => {
-      if (err) { res.writeHead(404, sec); return res.end('Not found'); }
-      res.writeHead(200, Object.assign({ 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' }, sec));
-      res.end(req.method === 'HEAD' ? undefined : data);
+    // Resolve symlinks and re-check containment, so a link inside an allowed folder cannot lead outside the web root.
+    fs.realpath(file, (rerr, real) => {
+      const rr = rerr ? null : path.relative(WEB_ROOT_REAL, real);
+      if (rerr || rr.startsWith('..') || path.isAbsolute(rr)) { res.writeHead(404, sec); return res.end('Not found'); }
+      fs.readFile(real, (err, data) => {
+        if (err) { res.writeHead(404, sec); return res.end('Not found'); }
+        res.writeHead(200, Object.assign({ 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' }, sec));
+        res.end(req.method === 'HEAD' ? undefined : data);
+      });
     });
   });
 
@@ -253,6 +264,7 @@ async function main() {
   function handleClient(socket) {
     let capture = null; // { stop() }
     let ifaces = null;
+    let listing = false;
     const ws = new WsConn(socket, onMessage, () => { stopCapture('client left'); client = null; });
     client = ws;
     ws.sendJson({ type: 'hello', version: VERSION, tool: replay ? 'replay' : tool ? tool.kind : null, platform: process.platform });
@@ -264,10 +276,14 @@ async function main() {
       try { m = JSON.parse(text); } catch (_) { return ws.sendJson({ type: 'error', message: 'Bad message' }); }
       try {
         if (m.type === 'list') {
-          if (replay) ifaces = [{ id: 'replay', index: '1', desc: path.basename(opts.replay) + ' (replay)' }];
-          else if (!tool) return ws.sendJson({ type: 'error', message: 'No capture tool found. Install tcpdump (macOS/Linux) or Wireshark (Windows) — or start the agent with --replay FILE.' });
-          else ifaces = await listInterfaces(tool);
-          ws.sendJson({ type: 'interfaces', interfaces: ifaces });
+          if (listing) return; // one interface listing at a time; a flood of requests must not spawn a flood of processes
+          listing = true;
+          try {
+            if (replay) ifaces = [{ id: 'replay', index: '1', desc: path.basename(opts.replay) + ' (replay)' }];
+            else if (!tool) return ws.sendJson({ type: 'error', message: 'No capture tool found. Install tcpdump (macOS/Linux) or Wireshark (Windows) — or start the agent with --replay FILE.' });
+            else ifaces = await listInterfaces(tool);
+            ws.sendJson({ type: 'interfaces', interfaces: ifaces });
+          } finally { listing = false; }
         } else if (m.type === 'start') {
           if (capture) return ws.sendJson({ type: 'error', message: 'A capture is already running.' });
           if (!ifaces) return ws.sendJson({ type: 'error', message: 'Ask for the interface list first.' });
@@ -349,8 +365,9 @@ async function main() {
   if (!HAS_UI && !opts.origins.length) console.log('\n  No link to open: this copy has no web app and no --origin was given.\n  Restart it as:  sudo node bavin-agent.js --origin https://<your-bavin-site>/\n');
   if (opts.origins.length) console.log('  (The token stays in the URL fragment, which browsers never send over the network.)\n');
   if (opts.open) {
-    const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
-    spawn(cmd, process.platform === 'win32' ? ['/c', 'start', '', url] : [url], { stdio: 'ignore', detached: true }).on('error', () => {}).unref();
+    // No shell involved on any platform (cmd.exe would treat characters in the URL as commands).
+    const [cmd, args] = process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['rundll32', ['url.dll,FileProtocolHandler', url]] : ['xdg-open', [url]];
+    spawn(cmd, args, { stdio: 'ignore', detached: true }).on('error', () => {}).unref();
   }
   const bye = () => { if (client) client.close(1001, 'agent exiting'); server.close(); setTimeout(() => process.exit(0), 200).unref(); };
   process.on('SIGINT', bye); process.on('SIGTERM', bye);

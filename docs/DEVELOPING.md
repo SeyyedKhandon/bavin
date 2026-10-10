@@ -6,7 +6,7 @@ For using Bavin, see the [Guide](GUIDE.md). This page is for changing it.
 
 ## Principles
 
-1. **A capture is untrusted input.** DNS names, HTTP headers and TLS server names are attacker-controlled. Everything derived from packets is inserted with `textContent` (see `js/dom.js`), never `innerHTML`. The page's Content-Security-Policy backs this up; do not weaken it. Every dissector must survive truncated and garbage input — the tests fuzz this.
+1. **A capture is untrusted input.** DNS names, HTTP headers and TLS server names are attacker-controlled. Everything derived from packets is inserted with `textContent` (see `js/dom.js`), never `innerHTML`. The page's Content-Security-Policy backs this up; do not weaken it. Every dissector must survive truncated and garbage input — the tests fuzz this — and must not be able to make the UI build an unbounded number of elements: `fld()` caps a layer at 150 fields and records the rest in `layer.hidden`. Anything exported (CSV) must neutralise spreadsheet formulas.
 2. **Every field knows its bytes.** A field is `(name, offset, length, value)`. That is what powers the linked hex dump, so never build a field without a real byte range.
 3. **No build step.** Plain classic scripts sharing a `window.Bavin` namespace, so the app works from `file://`, from any static host, and in Node for tests.
 4. **Nothing leaves the machine.** The only network access allowed is a WebSocket to `127.0.0.1` for the optional agent.
@@ -94,7 +94,7 @@ Messages (JSON text frames; capture bytes are binary frames):
 | page → agent | `{type:'stop'}` → `{type:'stopped', reason}` |
 | agent → page | `{type:'error', message}` at any time; `{type:'stopped', reason:'ended'\|'error'}` when the tool exits |
 
-**Invariants — do not break them:** `started` must be sent *before* any capture bytes (the page creates its parser on it); the agent listens on `127.0.0.1` only; the WebSocket demands the token, a matching `Host`, and an `Origin` that is the agent's own or one given with `--origin`; one client at a time; the interface must come from the tool's own list; the filter is validated and passed as a single argv element; static files are served only from the repository layout and only from an allowlist (a standalone copy serves none); HTTP-server sockets are half-open, so treat `'end'` as a disconnect.
+**Invariants — do not break them:** the page must not send anything until the peer has said `hello` with a numeric `version`, and must refuse ports below 1024 (a link can name any local port); `started` must be sent *before* any capture bytes (the page creates its parser on it); the agent listens on `127.0.0.1` only; the WebSocket demands the token, a matching `Host`, and an `Origin` that is the agent's own or one given with `--origin`; one client at a time; the interface must come from the tool's own list; the filter is validated and passed as a single argv element; static files are served only from the repository layout and only from an allowlist (a standalone copy serves none); HTTP-server sockets are half-open, so treat `'end'` as a disconnect.
 
 `--replay FILE` feeds a capture through the same pipeline on a virtual clock (batched, back-pressured), which is how the live path is tested without privileges.
 
